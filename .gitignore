@@ -43,3 +43,10 @@ src_rebuild/obj/*
 src_rebuild/build*
 src_rebuild/*.make
 src_rebuild/Makefile
+
+data/DRIVER2DEMO/
+data/config.ini.bak
+src_rebuild/dependencies/
+src_rebuild/bin/
+src_rebuild/build/
+src_rebuild/premake5.exe
