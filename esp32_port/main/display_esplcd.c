@@ -174,7 +174,26 @@ void displayWaitFlush(void)
 
 // ---------------------------------------------------------------------------
 // BGR555 (PSX VRAM) -> RGB565 band flush, for the REDRIVER2 software rasterizer
+//
+// PSX VRAM packs a pixel as STP | B<<10 | G<<5 | R, so red is in the LOW bits.
+// RGB565 puts red in the HIGH bits. The panel is configured
+// LCD_RGB_ELEMENT_ORDER_RGB (board_pins.h), so the ST7789's MADCTL colour-order
+// bit is clear and does NOT swap anything for us -- the conversion has to move
+// red up itself. An earlier version left red low and claimed MADCTL handled it,
+// which showed the whole game with red and blue exchanged: an orange sky over
+// blue asphalt. It went unnoticed for a long time because the debug screen dumps
+// read VRAM directly and never pass through this function.
 // ---------------------------------------------------------------------------
+static inline uint16_t psx555toPanel(uint16_t c)
+{
+    const uint16_t r5 = c & 0x1F;
+    const uint16_t g5 = (c >> 5) & 0x1F;
+    const uint16_t b5 = (c >> 10) & 0x1F;
+    // green widens 5 -> 6 by replicating its top bit
+    const uint16_t v = (uint16_t)((r5 << 11) | (((g5 << 1) | (g5 >> 4)) << 5) | b5);
+    return (uint16_t)((v >> 8) | (v << 8));     // the panel wants MSB first
+}
+
 void displayFlush555(const uint16_t* src, int stride, int w, int h)
 {
     if (w > DISPLAY_WIDTH) w = DISPLAY_WIDTH;
@@ -189,12 +208,7 @@ void displayFlush555(const uint16_t* src, int stride, int w, int h)
         for (int l = 0; l < lines; l++) {
             const uint16_t* s = src + (y + l) * stride;
             for (int x = 0; x < w; x++) {
-                uint16_t c = s[x];
-                // 555 -> 565: keep R/B in place (MADCTL BGR handles the swap),
-                // widen green by replicating its top bit
-                uint16_t g5 = (c >> 5) & 0x1F;
-                uint16_t v = (uint16_t)((c & 0x1F) | (((g5 << 1) | (g5 >> 4)) << 5) | (((c >> 10) & 0x1F) << 11));
-                dst[l * w + x] = (uint16_t)((v >> 8) | (v << 8));   // panel wants MSB first
+                dst[l * w + x] = psx555toPanel(s[x]);
             }
         }
         esp_lcd_panel_draw_bitmap(sPanel, 0, y, w, y + lines, dst);
@@ -293,10 +307,7 @@ void displayFlush555Scaled(const uint16_t* src, int stride, int sw, int sh)
             uint16_t* d = dst + l * DISPLAY_WIDTH;
             uint32_t sx = 0;
             for (int x = 0; x < DISPLAY_WIDTH; x++, sx += xStep) {
-                uint16_t c = s[sx >> 16];
-                uint16_t g5 = (c >> 5) & 0x1F;
-                uint16_t v = (uint16_t)((c & 0x1F) | (((g5 << 1) | (g5 >> 4)) << 5) | (((c >> 10) & 0x1F) << 11));
-                d[x] = (uint16_t)((v >> 8) | (v << 8));
+                d[x] = psx555toPanel(s[sx >> 16]);
             }
         }
         esp_lcd_panel_draw_bitmap(sPanel, 0, y, DISPLAY_WIDTH, y + lines, dst);
