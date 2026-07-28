@@ -1324,7 +1324,10 @@ void ProcessCarPad(CAR_DATA* cp, u_int pad, char PadSteer, char use_analogue)
 					targetCarId = -1;
 
 				// apply rubber banding to player car depending on distance from target car
-				if (targetCarId != -1)
+				// [A] the chase target can be a slot whose cosmetics were never
+				// spooled in (the demo data has no chase car), and this walks
+				// straight through the null pointer
+				if (targetCarId != -1 && car_data[targetCarId].ap.carCos != NULL)
 				{
 					tp = &car_data[targetCarId];
 

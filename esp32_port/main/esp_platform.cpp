@@ -250,24 +250,82 @@ extern "C" void esp_input_init()
     usb_serial_jtag_driver_install(&ucfg);
 }
 
+// ---- host pad state ---------------------------------------------------------
+// A terminal only ever transmits key PRESSES, so single characters can express
+// a tap but never a hold-and-release — useless for steering and throttle.
+// So the host may instead send the COMPLETE button state as "=HHHH", four hex
+// digits, active high, as often as it likes. It is stateless: a dropped byte
+// self-corrects on the next update, and if the host goes quiet the latch times
+// out and releases everything rather than leaving the throttle stuck on.
+
+#define HOST_MASK_TIMEOUT_MS 400
+
+static uint16_t sHostMask;          // active HIGH, as sent by the host
+static uint32_t sHostMaskMs;
+static int sHexCount = -1;          // -1 = not parsing, 0..3 = digits seen
+static uint16_t sHexAcc;
+
+static int hexVal(uint8_t c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
 // called from PsyX's pad read
 extern "C" uint16_t esp_input_poll()
 {
-    uint8_t buf[16];
-    int n = usb_serial_jtag_read_bytes(buf, sizeof(buf), 0);
+    // Drain the whole receive buffer, not a fixed nibble of it: the host sends
+    // a 5-byte pad packet 50 times a second, which outruns any per-frame cap
+    // and eventually backs up until the host's write blocks.
+    uint8_t buf[64];
+    int n;
+    while ((n = usb_serial_jtag_read_bytes(buf, sizeof(buf), 0)) > 0)
+    {
+        for (int i = 0; i < n; i++)
+        {
+            // mid-way through a "=HHHH" packet: consume digits, never keys
+            if (sHexCount >= 0) {
+                const int v = hexVal(buf[i]);
+                if (v < 0) {
+                    sHexCount = -1;                 // malformed, resync
+                } else {
+                    sHexAcc = (uint16_t)((sHexAcc << 4) | v);
+                    if (++sHexCount == 4) {
+                        sHostMask = sHexAcc;
+                        sHostMaskMs = (uint32_t)(esp_timer_get_time() / 1000);
+                        sHexCount = -1;
+                    }
+                }
+                continue;
+            }
 
-    for (int i = 0; i < n; i++) {
-        if (buf[i] == 'p') { sDumpRequest = 1; continue; }
-        if (buf[i] == 'v') { sDumpRequest = 2; continue; }
-        if (buf[i] == 't') { sDumpRequest = 3; continue; }
-        if (buf[i] == 'r') { sDumpRequest = 4; continue; }
-        const uint16_t m = serialMask(buf[i]);
-        if (m) sHold[__builtin_ctz(m)] = SERIAL_HOLD;   // held for a few frames
+            if (buf[i] == '=') { sHexCount = 0; sHexAcc = 0; continue; }
+            if (buf[i] == 'p') { sDumpRequest = 1; continue; }
+            if (buf[i] == 'v') { sDumpRequest = 2; continue; }
+            if (buf[i] == 't') { sDumpRequest = 3; continue; }
+            if (buf[i] == 'r') { sDumpRequest = 4; continue; }
+
+            const uint16_t m = serialMask(buf[i]);
+            if (m) sHold[__builtin_ctz(m)] = SERIAL_HOLD;   // tap: held a few frames
+        }
+        if (n < (int)sizeof(buf))
+            break;                                  // buffer drained
     }
 
     uint16_t mask = 0xFFFF;
     for (int b = 0; b < 16; b++) {
         if (sHold[b]) { sHold[b]--; mask &= ~(1u << b); }
+    }
+
+    // held buttons from the host, until the latch goes stale
+    if (sHostMask) {
+        const uint32_t nowMs = (uint32_t)(esp_timer_get_time() / 1000);
+        if (nowMs - sHostMaskMs < HOST_MASK_TIMEOUT_MS)
+            mask &= ~sHostMask;
+        else
+            sHostMask = 0;
     }
 
     for (unsigned i = 0; i < sizeof(sButtons) / sizeof(sButtons[0]); i++)
