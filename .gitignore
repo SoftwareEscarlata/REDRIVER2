@@ -50,3 +50,6 @@ src_rebuild/dependencies/
 src_rebuild/bin/
 src_rebuild/build/
 src_rebuild/premake5.exe
+esp32_port/build/
+esp32_port/sdkconfig
+esp32_port/sdkconfig.old
