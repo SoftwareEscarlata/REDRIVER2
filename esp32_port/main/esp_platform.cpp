@@ -31,6 +31,7 @@ extern "C" {
 extern DISPENV activeDispEnv;
 extern DRAWENV g_drawEnv[2];       // this file only ever runs on core 0
 extern int g_softRasterEnabled;
+extern int g_srFilter;             // PsyX_SoftRas.cpp — minification filter
 void SoftRas_DebugDecodeTPage(int baseX, int baseY, int clutX, int clutY,
                               int u0, int v0, uint16_t* out);
 }
@@ -306,6 +307,11 @@ extern "C" uint16_t esp_input_poll()
             if (buf[i] == 'v') { sDumpRequest = 2; continue; }
             if (buf[i] == 't') { sDumpRequest = 3; continue; }
             if (buf[i] == 'r') { sDumpRequest = 4; continue; }
+            if (buf[i] == 'f') {
+                g_srFilter = !g_srFilter;
+                ESP_LOGI(TAG, "texture filter %s", g_srFilter ? "ON" : "off");
+                continue;
+            }
 
             const uint16_t m = serialMask(buf[i]);
             if (m) sHold[__builtin_ctz(m)] = SERIAL_HOLD;   // tap: held a few frames
