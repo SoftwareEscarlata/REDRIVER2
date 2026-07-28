@@ -29,7 +29,7 @@ static const char* TAG = "psx_plat";
 extern unsigned short vram[VRAM_WIDTH * VRAM_HEIGHT];
 extern "C" {
 extern DISPENV activeDispEnv;
-extern DRAWENV activeDrawEnv;
+extern DRAWENV g_drawEnv[2];       // this file only ever runs on core 0
 extern int g_softRasterEnabled;
 void SoftRas_DebugDecodeTPage(int baseX, int baseY, int clutX, int clutY,
                               int u0, int v0, uint16_t* out);
@@ -50,7 +50,9 @@ extern "C" { int g_dbgSoftRasPrims = 0; }
 
 #ifdef SOFTRAS_PROFILE
 // C++ linkage: matches the `extern unsigned` declarations in the PsyCross files
-unsigned g_dbgRasCycles = 0, g_dbgRasBboxPx = 0, g_dbgRasTris = 0, g_dbgPresentCycles = 0;
+// per core: the cycle counter is per-CPU, and the split also shows band balance
+unsigned g_dbgRasCycles[2] = { 0, 0 };
+unsigned g_dbgRasBboxPx = 0, g_dbgRasTris = 0, g_dbgPresentCycles = 0;
 #endif
 
 // [dbg] 'p' over serial dumps the display area as 160x120 RGB332 hex, so the

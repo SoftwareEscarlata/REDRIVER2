@@ -71,9 +71,12 @@ char PsyX_BeginScene(void) { return 1; }
 // is asking the display for
 extern int g_dbgSoftRasPrims;   // esp_platform.cpp
 extern DISPENV activeDispEnv;   // PsyX_GPU.cpp
-extern DRAWENV activeDrawEnv;
+extern DRAWENV g_drawEnv[2];   // this file only ever runs on core 0
 #ifdef SOFTRAS_PROFILE
-extern unsigned g_dbgRasCycles, g_dbgRasBboxPx, g_dbgRasTris, g_dbgPresentCycles;
+extern unsigned g_dbgRasCycles[2];
+extern unsigned g_dbgRasBboxPx, g_dbgRasTris, g_dbgPresentCycles;
+extern int g_srEnvDiverge;      // esp_raster.cpp
+extern unsigned SoftRas_WorkerStackFree();
 #endif
 
 void PsyX_EndScene(void)
@@ -89,16 +92,23 @@ void PsyX_EndScene(void)
                      activeDispEnv.disp.w, activeDispEnv.disp.h,
                      (unsigned long)(g_dbgSoftRasPrims - prims0) / 60);
 #ifdef SOFTRAS_PROFILE
-            // cycles -> ms at 240 MHz, averaged over the 60 frames
-            ESP_LOGI(TAG, "  raster %lu ms/f  present %lu ms/f  other %lu ms/f | "
-                          "%lu tris/f  %lu kpx/f  %lu cyc/px",
-                     (unsigned long)(g_dbgRasCycles / 240000 / 60),
+            // cycles -> ms at 240 MHz, averaged over the 60 frames. The frame
+            // waits for both cores, so the critical path is the slower band.
+            const unsigned long r0 = g_dbgRasCycles[0] / 240000 / 60;
+            const unsigned long r1 = g_dbgRasCycles[1] / 240000 / 60;
+            const unsigned long tot = g_dbgRasCycles[0] + g_dbgRasCycles[1];
+            ESP_LOGI(TAG, "  raster c0 %lu + c1 %lu ms/f  present %lu  other %lu | "
+                          "%lu tris/f  %lu kpx/f  %lu cyc/px  diverge %d",
+                     r0, r1,
                      (unsigned long)(g_dbgPresentCycles / 240000 / 60),
-                     (unsigned long)(ms / 60) - (unsigned long)((g_dbgRasCycles + g_dbgPresentCycles) / 240000 / 60),
+                     (unsigned long)(ms / 60) - (r0 > r1 ? r0 : r1),
                      (unsigned long)(g_dbgRasTris / 60),
                      (unsigned long)(g_dbgRasBboxPx / 60 / 1000),
-                     (unsigned long)(g_dbgRasBboxPx ? g_dbgRasCycles / g_dbgRasBboxPx : 0));
-            g_dbgRasCycles = g_dbgPresentCycles = g_dbgRasBboxPx = g_dbgRasTris = 0;
+                     (unsigned long)(g_dbgRasBboxPx ? tot / g_dbgRasBboxPx : 0),
+                     g_srEnvDiverge);
+            ESP_LOGI(TAG, "  worker stack free %u B", SoftRas_WorkerStackFree());
+            g_dbgRasCycles[0] = g_dbgRasCycles[1] = 0;
+            g_dbgPresentCycles = g_dbgRasBboxPx = g_dbgRasTris = 0;
 #endif
         }
         t0 = now;

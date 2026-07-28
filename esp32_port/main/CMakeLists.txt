@@ -51,6 +51,7 @@ idf_component_register(
         "esp_platform.cpp"
         "esp_stubs.cpp"
         "esp_host.cpp"
+        "esp_raster.cpp"
         "esp_fs.c"
         "display_esplcd.c"
         ${GAME_SOURCES}
@@ -78,5 +79,5 @@ set_source_files_properties(${GAME_SOURCES} PROPERTIES
 
 # our host files include the same legacy headers, so they need the warnings
 # relaxed too (redundant parens in PSX SDK declarations)
-set_source_files_properties(esp_main.cpp esp_host.cpp esp_platform.cpp esp_stubs.cpp
+set_source_files_properties(esp_main.cpp esp_host.cpp esp_platform.cpp esp_stubs.cpp esp_raster.cpp
     PROPERTIES COMPILE_OPTIONS "-Wno-error=parentheses;-Wno-parentheses")

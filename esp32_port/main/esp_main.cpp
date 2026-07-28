@@ -59,6 +59,7 @@ static bool allocPsxMemory()
 }
 
 extern "C" void esp_input_init();
+extern "C" void SoftRas_ForkInit();
 extern "C" int g_softRasterEnabled;
 
 static void gameTask(void*)
@@ -102,6 +103,9 @@ extern "C" void app_main(void)
 
     // panel flushes run on core 1 so the game task never waits on SPI DMA
     displayPresentAsyncInit();
+
+    // second core rasterises the bottom band of every frame
+    SoftRas_ForkInit();
 
     esp_input_init();
 
