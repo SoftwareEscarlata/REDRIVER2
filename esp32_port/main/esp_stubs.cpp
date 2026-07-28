@@ -5,6 +5,8 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include "esp_log.h"
+
 #include "PsyX/PsyX_public.h"
 #include "PsyX/PsyX_render.h"
 #include "psx/libgpu.h"
@@ -78,14 +80,35 @@ void GR_ClearVRAM(int x, int y, int w, int h, unsigned char r, unsigned char g, 
             vram[yy * VRAM_WIDTH + xx] = c;
 }
 
+// src == NULL means a VRAM->VRAM move: MoveImage() passes the source rect in
+// x/y (LIBGPU.C). Otherwise src is a linear w*h source image (LoadImage).
 void GR_CopyVRAM(unsigned short* src, int x, int y, int w, int h, int dst_x, int dst_y)
 {
     extern unsigned short vram[VRAM_WIDTH * VRAM_HEIGHT];
-    (void)x; (void)y;
-    for (int yy = 0; yy < h; yy++) {
-        int dy = (dst_y + yy) & (VRAM_HEIGHT - 1);
+    static unsigned short row[VRAM_WIDTH];   // staging: the rects may overlap
+
+    if (w > VRAM_WIDTH) w = VRAM_WIDTH;
+
+    // when moving down over itself, go bottom-up so rows are read before write
+    const int step = (src == NULL && dst_y > y) ? -1 : 1;
+    const int first = (step < 0) ? h - 1 : 0;
+
+    for (int i = 0; i < h; i++) {
+        const int yy = first + i * step;
+        const unsigned short* s;
+
+        if (src) {
+            s = src + yy * w;
+        } else {
+            const int sy = (y + yy) & (VRAM_HEIGHT - 1);
+            for (int xx = 0; xx < w; xx++)
+                row[xx] = vram[sy * VRAM_WIDTH + ((x + xx) & (VRAM_WIDTH - 1))];
+            s = row;
+        }
+
+        const int dy = (dst_y + yy) & (VRAM_HEIGHT - 1);
         for (int xx = 0; xx < w; xx++)
-            vram[dy * VRAM_WIDTH + ((dst_x + xx) & (VRAM_WIDTH - 1))] = src[yy * w + xx];
+            vram[dy * VRAM_WIDTH + ((dst_x + xx) & (VRAM_WIDTH - 1))] = s[xx];
     }
 }
 

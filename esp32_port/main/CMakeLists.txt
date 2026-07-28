@@ -69,6 +69,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     NTSC_VERSION RELEASE ESP32_PORT
     USE_PGXP=0 USE_EXTENDED_PRIM_POINTERS=1
     PSYX_NO_RENDERER=1
+    SOFTRAS_PROFILE=1
 )
 
 # the game's C-as-C++ needs the same permissiveness the Linux build uses

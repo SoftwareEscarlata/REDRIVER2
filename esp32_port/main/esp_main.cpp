@@ -100,6 +100,9 @@ extern "C" void app_main(void)
         return;
     }
 
+    // panel flushes run on core 1 so the game task never waits on SPI DMA
+    displayPresentAsyncInit();
+
     esp_input_init();
 
     // big stack in PSRAM (the PSX code recurses through the renderer);

@@ -1918,12 +1918,18 @@ void State_FrontEnd(void* param)
 
 	if ((VSync(-1) - idle_timer) > 1800)
 	{
-		if (ScreenDepth == 0)
+		char attractName[32];
+		sprintf(attractName, "REPLAYS\\ATTRACT.%d", gIdleReplay + 400);
+
+		// Only leave the menu if the attract replay really is on the disc.
+		// The demo data set ships no REPLAYS folder at all, and GameStart has
+		// no failure path — it would retry the missing file forever.
+		if (ScreenDepth == 0 && FileExists(attractName))
 		{
 			GameType = GAME_IDLEDEMO;
 
 			gCurrentMissionNumber = gIdleReplay + 400;
-			
+
 			if (++gIdleReplay == 4)
 				gIdleReplay = 0;
 

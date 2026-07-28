@@ -12,6 +12,10 @@
 extern "C" {
 #endif
 void* esp_game_fopen(const char* name, const char* mode);
+
+// Direct pointer to a container file in memory-mapped flash (spool.c uses it
+// to read the level's city data in place instead of buffering 16MB).
+const void* esp_fs_map(const char* name, unsigned int* size);
 #ifdef __cplusplus
 }
 #endif

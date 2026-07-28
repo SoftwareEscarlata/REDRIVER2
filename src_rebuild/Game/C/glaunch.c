@@ -192,6 +192,16 @@ void State_GameStart(void* param)
 
 				SetState(STATE_GAMELAUNCH);
 			}
+			else
+			{
+				// Safety net: no attract replay available. Without this the
+				// state never changes, so GameStart re-enters and retries the
+				// same missing file forever. SetPleaseWait already replaced the
+				// frontend's hi-res display env, so put it back.
+				gInFrontend = 1;
+				SetFEDrawMode();
+				SetState(STATE_FRONTEND);
+			}
 
 			break;
 		case GAME_PURSUIT:

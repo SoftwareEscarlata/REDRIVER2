@@ -21,7 +21,8 @@ MAGIC = 0x4C564C4F  # 'OLVL'
 NAME_LEN = 32
 
 SKIP_DIRS = {"GFX/HQ"}
-SKIP_FILES = {"GFX/SPLASH1N.TIM"}
+# note: the splash TIMs must stay — the boot sequence blocks without them
+SKIP_FILES = set()
 SOUND_FILES = {"SOUND/VOICES2.BLK", "SOUND/MUSIC.BIN"}
 
 

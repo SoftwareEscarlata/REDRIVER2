@@ -62,14 +62,68 @@ int SoftRas_PresentESP();               // esp_platform.cpp
 uint16_t esp_input_poll();
 uint32_t esp_millis();
 
+// raw PADRAW buffers the game hands over via PadInitDirect
+static u_char* sPadData[2];
+
 char PsyX_BeginScene(void) { return 1; }
+
+// [dbg] heartbeat: proves the game reached the frame path and shows what it
+// is asking the display for
+extern int g_dbgSoftRasPrims;   // esp_platform.cpp
+extern DISPENV activeDispEnv;   // PsyX_GPU.cpp
+extern DRAWENV activeDrawEnv;
+#ifdef SOFTRAS_PROFILE
+extern unsigned g_dbgRasCycles, g_dbgRasBboxPx, g_dbgRasTris, g_dbgPresentCycles;
+#endif
 
 void PsyX_EndScene(void)
 {
+    static int frames = 0;
+    static uint32_t t0 = 0, prims0 = 0;
+    if ((++frames % 60) == 0) {
+        const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+        if (t0) {
+            const uint32_t ms = now - t0;
+            ESP_LOGI(TAG, "%d.%d fps  %dx%d  %lu prims/frame", 60000 / ms,
+                     (600000 / ms) % 10,
+                     activeDispEnv.disp.w, activeDispEnv.disp.h,
+                     (unsigned long)(g_dbgSoftRasPrims - prims0) / 60);
+#ifdef SOFTRAS_PROFILE
+            // cycles -> ms at 240 MHz, averaged over the 60 frames
+            ESP_LOGI(TAG, "  raster %lu ms/f  present %lu ms/f  other %lu ms/f | "
+                          "%lu tris/f  %lu kpx/f  %lu cyc/px",
+                     (unsigned long)(g_dbgRasCycles / 240000 / 60),
+                     (unsigned long)(g_dbgPresentCycles / 240000 / 60),
+                     (unsigned long)(ms / 60) - (unsigned long)((g_dbgRasCycles + g_dbgPresentCycles) / 240000 / 60),
+                     (unsigned long)(g_dbgRasTris / 60),
+                     (unsigned long)(g_dbgRasBboxPx / 60 / 1000),
+                     (unsigned long)(g_dbgRasBboxPx ? g_dbgRasCycles / g_dbgRasBboxPx : 0));
+            g_dbgRasCycles = g_dbgPresentCycles = g_dbgRasBboxPx = g_dbgRasTris = 0;
+#endif
+        }
+        t0 = now;
+        prims0 = g_dbgSoftRasPrims;
+    }
     SoftRas_PresentESP();
 }
 
-void PsyX_UpdateInput(void) { esp_input_poll(); }
+// Driver 2 does not go through PadGetState — ReadControllers() reads the raw
+// PADRAW buffers registered by PadInitDirect. So this, not PsyX_Pad_GetStatus,
+// is what actually has to publish the pad state each frame.
+void PsyX_UpdateInput(void)
+{
+    const uint16_t buttons = esp_input_poll();   // active low
+
+    if (sPadData[0]) {
+        u_char* p = sPadData[0];
+        p[0] = 0x00;                        // status: ok
+        p[1] = 0x41;                        // id: digital pad, 1 halfword
+        p[2] = (u_char)(buttons >> 8);      // MapPad reads buttons[0] as the high byte
+        p[3] = (u_char)(buttons & 0xFF);
+    }
+    if (sPadData[1])
+        sPadData[1][0] = 0xFF;              // slot 2 disconnected
+}
 
 void PsyX_GetScreenSize(int* w, int* h)
 {
@@ -109,8 +163,6 @@ void PsyX_WaitForTimestep(int count)
 // ---------------------------------------------------------------------------
 // pad — PsyX normally fills the game's raw report buffers from SDL
 // ---------------------------------------------------------------------------
-static u_char* sPadData[2];
-
 void PsyX_Pad_InitPad(int slot, u_char* padData)
 {
     if (slot >= 0 && slot < 2) sPadData[slot] = padData;
@@ -119,16 +171,7 @@ void PsyX_Pad_InitPad(int slot, u_char* padData)
 int PsyX_Pad_GetStatus(int mtap, int slot)
 {
     (void)mtap;
-    if (slot != 0 || !sPadData[0]) return 0;
-
-    // digital pad report: status, type/len, then the active-low button word
-    const uint16_t buttons = esp_input_poll();
-    u_char* p = sPadData[0];
-    p[0] = 0x00;            // ok
-    p[1] = 0x41;            // digital pad, 1 halfword of data
-    p[2] = (u_char)(buttons & 0xFF);
-    p[3] = (u_char)(buttons >> 8);
-    return 1;
+    return (slot == 0 && sPadData[0]) ? 1 : 0;   // report filled in PsyX_UpdateInput
 }
 
 void PsyX_Pad_Vibrate(int, int, unsigned char*, int) {}

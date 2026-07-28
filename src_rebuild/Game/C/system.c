@@ -860,7 +860,9 @@ void ResetCityType(void)
 	lastcity = -1;
 
 #ifndef PSX
-	free(g_CurrentLevelSpoolData);
+#ifndef ESP32_PORT
+	free(g_CurrentLevelSpoolData);	// on ESP32 this points into mmap'd flash
+#endif
 	g_CurrentLevelSpoolData = NULL;
 #endif // PSX
 }

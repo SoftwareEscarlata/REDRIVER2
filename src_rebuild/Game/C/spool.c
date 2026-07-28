@@ -1431,11 +1431,24 @@ int UpdateSpoolPC(void)
 	// read entire spool data
 	if (g_CurrentLevelSpoolData == NULL)
 	{
+#ifdef ESP32_PORT
+		// The 16MB copy below does not fit on this target. The level file is
+		// already memory-mapped from flash, so use it in place: every reader
+		// below only memcpy's out of this pointer. (esp_fs_map is declared in
+		// the force-included esp_compat.h.)
+		const void* levelBase = esp_fs_map(g_CurrentLevelFileName, NULL);
+
+		if (levelBase == NULL)
+			return 0;
+
+		g_CurrentLevelSpoolData = (char*)levelBase + SpoolLumpOffset;
+#else
 		int SpoolLumpSize;
 		SpoolLumpSize = 16 * 1024 * 1024; // allocate 16 MB of RAM for spoolable data
 		g_CurrentLevelSpoolData = (char*)malloc(16 * 1024 * 1024);
 
 		loadsectors(g_CurrentLevelSpoolData, SpoolLumpOffset / CDSECTOR_SIZE, SpoolLumpSize);
+#endif
 	}
 
 	for (; spoolpos_reading < spoolcounter; spoolpos_reading++)
@@ -1474,6 +1487,7 @@ int UpdateSpoolPC(void)
 
 		// seek to required sector
 		spoolDataPtr = g_CurrentLevelSpoolData - SpoolLumpOffset + current->sector * CDSECTOR_SIZE;
+
 
 		switch (current->type)
 		{

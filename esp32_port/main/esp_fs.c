@@ -253,11 +253,28 @@ int esp_fs_mount(void)
     return esp_vfs_register("/d", &vfs, NULL) == ESP_OK ? 0 : -1;
 }
 
+const void* esp_fs_map(const char* name, unsigned int* size)
+{
+    if (name[0] == '/') name++;
+    if (!strncmp(name, "d/", 2)) name += 2;
+
+    const OlvlEntry* e = flashFind(name);
+    if (!e) return NULL;
+    if (size) *size = e->size;
+    return sBase + e->offset;
+}
+
 void* esp_game_fopen(const char* name, const char* mode)
 {
-    if (name[0] == '/')
-        return fopen(name, mode);
-    char buf[80];
-    snprintf(buf, sizeof(buf), "/d/%s", name);
-    return fopen(buf, mode);
+    FILE* f;
+    if (name[0] == '/') {
+        f = fopen(name, mode);
+    } else {
+        char buf[80];
+        snprintf(buf, sizeof(buf), "/d/%s", name);
+        f = fopen(buf, mode);
+    }
+    if (!f)
+        ESP_LOGD(TAG, "missing: %s", name);
+    return f;
 }

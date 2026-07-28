@@ -9,6 +9,7 @@
 // Pin assignments live in board_pins.h.
 #include <string.h>
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
@@ -197,6 +198,108 @@ void displayFlush555(const uint16_t* src, int stride, int w, int h)
             }
         }
         esp_lcd_panel_draw_bitmap(sPanel, 0, y, w, y + lines, dst);
+        buf ^= 1;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Asynchronous present
+//
+// A full 320x240 16bpp frame is 153,600 bytes; at the panel's 80 MHz SPI clock
+// that is 15.4 ms of pure transfer, and the measured present cost was 17 ms.
+// So the present is transfer-bound, not CPU-bound: nearly all of it was the
+// game task sitting on the DMA-complete semaphore. Handing the flush to a task
+// on the other core takes that whole cost off the frame's critical path.
+//
+// Safe because the PSX double-buffers: the frame being transmitted lives in a
+// different half of VRAM from the one being drawn. The caller is expected to
+// check that (see SoftRas_PresentESP) and fall back to the blocking path when
+// the two overlap, as they do in the 640x512 frontend.
+// ---------------------------------------------------------------------------
+
+static TaskHandle_t sPresentTask;
+static SemaphoreHandle_t sPresentIdle;      // given when a flush has completed
+
+static struct {
+    const uint16_t* src;
+    int stride, sw, sh;
+} sPresentJob;
+
+static void presentTask(void* arg)
+{
+    (void)arg;
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        displayFlush555Scaled(sPresentJob.src, sPresentJob.stride,
+                              sPresentJob.sw, sPresentJob.sh);
+        xSemaphoreGive(sPresentIdle);
+    }
+}
+
+int displayPresentAsyncInit(void)
+{
+    sPresentIdle = xSemaphoreCreateBinary();
+    if (!sPresentIdle) return -1;
+    xSemaphoreGive(sPresentIdle);           // starts idle
+
+    // pinned to core 1: core 0 runs the game task
+    if (xTaskCreatePinnedToCore(presentTask, "present", 3072, NULL, 4,
+                                &sPresentTask, 1) != pdPASS) {
+        ESP_LOGE(TAG, "present task creation failed");
+        return -1;
+    }
+    return 0;
+}
+
+void displayPresentWait(void)
+{
+    if (!sPresentIdle) return;
+    xSemaphoreTake(sPresentIdle, portMAX_DELAY);
+    xSemaphoreGive(sPresentIdle);
+}
+
+void displayPresentAsync(const uint16_t* src, int stride, int sw, int sh)
+{
+    if (!sPresentTask) {                    // no worker: just do it inline
+        displayFlush555Scaled(src, stride, sw, sh);
+        return;
+    }
+    xSemaphoreTake(sPresentIdle, portMAX_DELAY);   // previous flush finished
+    sPresentJob.src = src;
+    sPresentJob.stride = stride;
+    sPresentJob.sw = sw;
+    sPresentJob.sh = sh;
+    xTaskNotifyGive(sPresentTask);
+}
+
+void displayFlush555Scaled(const uint16_t* src, int stride, int sw, int sh)
+{
+    if (sw <= 0 || sh <= 0) return;
+
+    // 16.16 nearest-neighbour steps, so any PSX video mode fills the panel.
+    // Driver 2 needs this: the frontend runs 640x512 hi-res while the game
+    // itself runs 320x240. At 320x240 the steps are exactly 1.0 (no resampling).
+    const uint32_t xStep = ((uint32_t)sw << 16) / DISPLAY_WIDTH;
+    const uint32_t yStep = ((uint32_t)sh << 16) / DISPLAY_HEIGHT;
+
+    int buf = 0;
+    for (int y = 0; y < DISPLAY_HEIGHT; y += CHUNK_LINES) {
+        int lines = (y + CHUNK_LINES <= DISPLAY_HEIGHT) ? CHUNK_LINES : (DISPLAY_HEIGHT - y);
+
+        xSemaphoreTake(sTransDone, portMAX_DELAY);
+        uint16_t* dst = sChunk[buf];
+        for (int l = 0; l < lines; l++) {
+            const uint16_t* s = src + (((uint32_t)(y + l) * yStep) >> 16) * stride;
+            uint16_t* d = dst + l * DISPLAY_WIDTH;
+            uint32_t sx = 0;
+            for (int x = 0; x < DISPLAY_WIDTH; x++, sx += xStep) {
+                uint16_t c = s[sx >> 16];
+                uint16_t g5 = (c >> 5) & 0x1F;
+                uint16_t v = (uint16_t)((c & 0x1F) | (((g5 << 1) | (g5 >> 4)) << 5) | (((c >> 10) & 0x1F) << 11));
+                d[x] = (uint16_t)((v >> 8) | (v << 8));
+            }
+        }
+        esp_lcd_panel_draw_bitmap(sPanel, 0, y, DISPLAY_WIDTH, y + lines, dst);
         buf ^= 1;
     }
 }

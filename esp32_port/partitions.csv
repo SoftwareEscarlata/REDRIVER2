@@ -2,5 +2,7 @@
 nvs,      data, nvs,     0x9000,   0x6000,
 phy_init, data, phy,     0xf000,   0x1000,
 factory,  app,  factory, 0x10000,  0x400000,
-# demo data (OLVL container): Havana level + frontend assets, 7.4MB without sound
-gamedata, data, 0x40,    0x410000, 0xB00000,
+# demo data (OLVL container): Havana level + frontend assets + sound banks.
+# The sound banks must ship even before audio exists — the frontend blocks on
+# a failed VOICES2.BLK open. Sized to the end of the 16MB flash.
+gamedata, data, 0x40,    0x410000, 0xBF0000,

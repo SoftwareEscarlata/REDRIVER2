@@ -51,7 +51,10 @@
 #define PIN_BTN_DOWN    4   // P1 pin 2
 #define PIN_BTN_LEFT    6   // P1 pin 3
 #define PIN_BTN_RIGHT   16  // P1 pin 4  (hw pullup)
-#define PIN_BTN_A       17  // P1 pin 5
+// NOTE: IO17 measures 0 at reset even with the internal pullup enabled, so this
+// board drives it. esp_input_init() detects that and disables the line; CROSS
+// is still reachable on GPIO0 (BOOT) and over serial.
+#define PIN_BTN_A       17  // P1 pin 5  (unusable on this board - see above)
 #define PIN_BTN_B       18  // P1 pin 6
 #define PIN_BTN_L       21  // P1 pin 7  (hw pullup)
 #define PIN_BTN_R       8   // P1 pin 8
