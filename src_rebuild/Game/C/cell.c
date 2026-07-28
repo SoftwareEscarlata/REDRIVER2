@@ -5,7 +5,7 @@
 #include "spool.h"
 
 int cell_object_index = 0;
-CELL_OBJECT cell_object_buffer[1024];
+D2_PSRAM CELL_OBJECT cell_object_buffer[1024];
 
 u_char cell_object_computed_values[2048];
 

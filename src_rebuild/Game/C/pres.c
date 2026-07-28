@@ -23,7 +23,7 @@ TextureID gHiresFontTexture = 0;
 TextureID gHiresDigitsTexture = 0;
 
 OUT_FN2RANGE gHiresFontRanges[4];
-OUT_FN2INFO gHiresFontCharData[4][224];
+D2_PSRAM OUT_FN2INFO gHiresFontCharData[4][224];
 int gHiresFontRangeCount = 0;
 
 void InitHiresFonts()

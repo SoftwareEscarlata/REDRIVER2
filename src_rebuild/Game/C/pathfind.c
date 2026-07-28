@@ -30,7 +30,7 @@ struct XZDIR
 };
 
 // Fast Marching method
-ushort distanceCache[16384];
+D2_PSRAM ushort distanceCache[16384];
 char omap[128][16];				// obstacle map 128x128 (bit field)
 int dunyet[32][2];				// scanned cell map (32x32, multi-level bitfield)
 int pathIterations;

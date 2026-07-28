@@ -11,6 +11,13 @@ set(PSY  ${RB}/PsyCross)
 
 file(GLOB SRC_GAME_C   ${RB}/Game/C/*.c)
 file(GLOB SRC_GAME_FE  ${RB}/Game/Frontend/*.c)
+# Game/ASM holds the portable C versions of the PSX assembly routines
+# (renderer inner loops, RNC decompression, map lookups); Game/*.c has the
+# locale tables. Both are required.
+file(GLOB SRC_GAME_ASM ${RB}/Game/ASM/*.c)
+file(GLOB SRC_GAME_ENG ${RB}/Game/engine/*.c ${RB}/Game/engine/*.cpp)
+file(GLOB SRC_GAME_ROOT ${RB}/Game/*.c)
+list(FILTER SRC_GAME_ASM EXCLUDE REGEX "asmtest")
 file(GLOB SRC_UTILS    ${RB}/utils/*.cpp)
 file(GLOB SRC_PSX      ${PSY}/src/psx/*.C ${PSY}/src/psx/*.c)
 # LIBCD emulates a CD drive with an SDL spooler thread; game data is
@@ -26,14 +33,15 @@ list(FILTER SRC_UTILS EXCLUDE REGEX "video_source|audio_source|VideoPlayer|fs\\.
 list(FILTER SRC_GAME_C EXCLUDE REGEX "xaplay")
 
 set(GAME_SOURCES
-    ${SRC_GAME_C} ${SRC_GAME_FE} ${SRC_UTILS}
-    ${SRC_PSX} ${SRC_GTE} ${SRC_GPU}
+    ${SRC_GAME_C} ${SRC_GAME_FE} ${SRC_GAME_ASM} ${SRC_GAME_ENG} ${SRC_GAME_ROOT}
+    ${SRC_UTILS} ${SRC_PSX} ${SRC_GTE} ${SRC_GPU}
 )
 
 # upstream compiles the game's C as C++
 # (skipped during IDF's requirement-scan pass, where this command is illegal)
 if(NOT CMAKE_BUILD_EARLY_EXPANSION)
-    set_source_files_properties(${SRC_GAME_C} ${SRC_GAME_FE} ${SRC_PSX}
+    set_source_files_properties(
+        ${SRC_GAME_C} ${SRC_GAME_FE} ${SRC_GAME_ASM} ${SRC_GAME_ROOT} ${SRC_PSX}
         PROPERTIES LANGUAGE CXX)
 endif()
 
@@ -42,6 +50,7 @@ idf_component_register(
         "esp_main.cpp"
         "esp_platform.cpp"
         "esp_stubs.cpp"
+        "esp_host.cpp"
         "esp_fs.c"
         "display_esplcd.c"
         ${GAME_SOURCES}
@@ -65,3 +74,8 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
 # the game's C-as-C++ needs the same permissiveness the Linux build uses
 set_source_files_properties(${GAME_SOURCES} PROPERTIES
     COMPILE_OPTIONS "-w;-fpermissive;-Wno-narrowing;-include${CMAKE_CURRENT_LIST_DIR}/esp_compat.h")
+
+# our host files include the same legacy headers, so they need the warnings
+# relaxed too (redundant parens in PSX SDK declarations)
+set_source_files_properties(esp_main.cpp esp_host.cpp esp_platform.cpp esp_stubs.cpp
+    PROPERTIES COMPILE_OPTIONS "-Wno-error=parentheses;-Wno-parentheses")

@@ -38,7 +38,7 @@ struct FEFONT_QUAD
 
 TextureID gHiresFEFontTexture = 0;
 OUT_FN2RANGE gHiresFEFontRanges[4];
-OUT_FN2INFO gHiresFEFontCharData[4][224];
+D2_PSRAM OUT_FN2INFO gHiresFEFontCharData[4][224];
 int gHiresFEFontRangeCount = 0;
 
 void InitHiresFEFont()
@@ -318,7 +318,7 @@ enum FEButtonAction
 #ifdef USE_EMBEDDED_FRONTEND_SCREENS
 #include "FEscreens.inc"
 #else
-PSXSCREEN PsxScreens[42];
+D2_PSRAM PSXSCREEN PsxScreens[42];
 #endif
 
 #define FE_OTSIZE 16

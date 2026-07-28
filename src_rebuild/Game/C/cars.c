@@ -73,11 +73,11 @@ u_char lightsOnDelay[MAX_CARS];
 short FrontWheelRotation[MAX_CARS]; // offset 0x0
 short BackWheelRotation[MAX_CARS]; // offset 0x30
 
-SVECTOR gTempCarVertDump[MAX_CARS][MAX_DENTING_VERTS];
+D2_PSRAM SVECTOR gTempCarVertDump[MAX_CARS][MAX_DENTING_VERTS];
 
 DENTUVS *gTempCarUVPtr;
 DENTUVS gTempHDCarUVDump[MAX_CARS][MAX_DENTING_UVS];
-DENTUVS gTempLDCarUVDump[MAX_CARS][MAX_DENTING_LOD_UVS];
+D2_PSRAM DENTUVS gTempLDCarUVDump[MAX_CARS][MAX_DENTING_LOD_UVS];
 
 CAR_MODEL NewCarModel[MAX_CAR_RESIDENT_MODELS];
 CAR_MODEL NewLowCarModel[MAX_CAR_RESIDENT_MODELS];
@@ -94,7 +94,7 @@ u_short civ_clut[8][32][6];
 
 int whichCP = 0;
 int baseSpecCP = 0;
-CAR_POLY carPolyBuffer[MAX_CAR_POLYS + 1];
+D2_PSRAM CAR_POLY carPolyBuffer[MAX_CAR_POLYS + 1];
 
 char LeftLight = 0;
 char RightLight = 0;

@@ -29,3 +29,9 @@ void* esp_game_fopen(const char* name, const char* mode);
 // does not exist, so config.dat/progress.dat land in the RAM-file area.
 #define HOME_ENV "HOME"
 #define _mkdir(p) (0)
+
+// Marks a large, cold game array for octal PSRAM .bss instead of internal
+// SRAM (see the port notes). Defined here because this header is force-
+// included into every game translation unit.
+#include "esp_attr.h"
+#define D2_PSRAM EXT_RAM_BSS_ATTR

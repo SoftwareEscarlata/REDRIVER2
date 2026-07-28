@@ -117,7 +117,12 @@ void sys_tempfree()
 }
 #elif !defined(PSX)
 
-char g_allocatedMem[0x200000];			// 0x137400 (_ramsize). TODO: use real malloc  size: 870332
+#ifdef ESP32_PORT
+#include "esp_attr.h"
+EXT_RAM_BSS_ATTR char g_allocatedMem[0x200000];   // 2MB PSX RAM arena -> PSRAM
+#else
+char g_allocatedMem[0x200000];
+#endif			// 0x137400 (_ramsize). TODO: use real malloc  size: 870332
 volatile char* mallocptr = g_allocatedMem;
 volatile char* malloctab = g_allocatedMem;
 

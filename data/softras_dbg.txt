@@ -1,0 +1,2 @@
+frames=2945 prims=3146978 tris=0 presentStatus=0 enabled=1
+input: kc_cross=40 crossPresses=1252 anyKeyPresses=1617
