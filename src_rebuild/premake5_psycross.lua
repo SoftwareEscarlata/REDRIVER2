@@ -6,7 +6,7 @@ project "PsyCross"
     language "C++"
     targetdir "bin/%{cfg.buildcfg}"
 
-    defines { GAME_REGION }
+    defines { GAME_REGION, "USE_PGXP=0" }
 
     files {
         "PsyCross/**.h", 

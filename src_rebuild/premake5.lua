@@ -51,7 +51,7 @@ workspace "REDRIVER2"
 
     configurations { "Debug", "Release", "Release_dev" }
 	
-    defines { VERSION } 
+    defines { VERSION, "USE_PGXP=0" } 
 	
 	if os.target() == "emscripten" then
 		platforms { "emscripten" }
