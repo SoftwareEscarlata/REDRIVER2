@@ -16,12 +16,17 @@ The layer is small on purpose. Six files:
 |---|---:|---|
 | `esp32_port/main/esp_main.cpp` | 122 | `app_main`, PSX memory map, boot order, game task |
 | `esp32_port/main/esp_fs.c` | 280 | OLVL flash container, VFS at `/d`, RAM write-files, `esp_fs_map` |
-| `esp32_port/main/display_esplcd.c` | 305 | ST7789 over SPI, DMA chunking, 555→565, rescale, async present |
+| `esp32_port/main/display_esplcd.c` | 316 | ST7789 over SPI, DMA chunking, 555→565, rescale, async present |
 | `esp32_port/main/esp_platform.cpp` | 352 | present entry point, GPIO + serial pad, debug dumps, clock |
 | `esp32_port/main/esp_host.cpp` | 254 | PsyX host services: frame, pad publish, vblank, log, CD/SPU/XA no-ops |
 | `esp32_port/main/esp_stubs.cpp` | 123 | `GR_*` backend surface; VRAM copy/read/clear implemented for real |
 
-Plus three headers (`esp_fs.h`, `display.h`, `board_pins.h`, `esp_compat.h`), the
+(A seventh file lives in the same directory, `esp_raster.cpp`, 162 lines: the second-core
+fork/join and the band balancer. It belongs to the rasterizer story rather than to the
+host layer and is covered elsewhere — it appears below only where it constrains memory
+placement.)
+
+Plus four headers (`esp_fs.h`, `display.h`, `board_pins.h`, `esp_compat.h`), the
 partition table, and `make_data.py` which builds the flash data image.
 
 ---
@@ -59,7 +64,7 @@ Two properties matter:
 * **Blobs are 4-byte aligned** (`make_data.py:61,68`) precisely so an mmap'd pointer
   into the middle of the image is usable in place, which section 1.6 depends on.
 
-The packer drops `GFX/HQ` (4.7 MB of PC-only high-resolution font TGAs — the two
+The packer drops `GFX/HQ` (4.61 MB of PC-only high-resolution font TGAs — the two
 `.tga` files alone are 2.3 MB each) and can optionally drop the sound banks. The
 splash TIMs are explicitly *not* droppable; an early revision cut them and the boot
 sequence blocked forever, which is recorded in both the script's comment
@@ -68,7 +73,7 @@ sequence blocked forever, which is recorded in both the script's comment
 For the free demo set the result is:
 
 ```
-gamedata.bin: 11,487,176 bytes (10.96 MB) with sound
+gamedata.bin: 11,487,176 bytes (10.95 MB) with sound
   LEVELS/HAVANA.LEV     5.98 MB
   SOUND/VOICES2.BLK     2.49 MB
   SOUND/MUSIC.BIN       0.75 MB
@@ -413,7 +418,8 @@ their users, PsyCross shrinks them for this target:
 #endif
 ```
 
-`65536 → 64` entries and `MAX_DRAW_SPLITS 4096 → 4` (`PsyX_GPU.h`), which is how
+`65536 → 64` entries, and `MAX_DRAW_SPLITS 4096 → 4` under the same `#ifdef ESP32_PORT`
+in `PsyX_GPU.cpp:59-63` (the define lives in the .cpp, not in `PsyX_GPU.h`), which is how
 1.9 MB became 1,856 bytes. They go to PSRAM as well, because "small enough not to
 matter" is not the same as "worth internal SRAM".
 
@@ -444,7 +450,7 @@ pleasant to port — there is exactly one definition to move.
 
 On PC these ten buffers are either statics or `malloc`s in
 `src_rebuild/redriver2_psxpc.cpp` — a host file this build does not compile. So the
-port has to provide them. `esp_main.cpp:44-59` does, from PSRAM:
+port has to provide them. `esp_main.cpp:37-59` does, from PSRAM:
 
 ```c
 static void* psram(size_t size, const char* what)
@@ -518,7 +524,7 @@ Three decisions in nine lines:
 The counterpart is the rule for tasks whose stack must **not** be external:
 
 ```c
-// esp_raster.cpp:62-68
+// esp_raster.cpp:62-69
 // Internal stack: an ISR runs on the interrupted task's stack on Xtensa,
 // and the panel DMA completion handler is IRAM-resident precisely so it can
 // fire with the flash cache disabled — at which point a PSRAM stack is
@@ -533,9 +539,14 @@ interrupt handler executes on the stack of whatever task it interrupted. If that
 is in PSRAM and the interrupt can fire while the cache is disabled (as flash-write and
 some driver paths do), the handler faults. So the rasterizer worker and the present
 task keep internal stacks (6 KB and 3 KB), and only the game task — which is never the
-target of a cache-disabled ISR in this design — gets the cheap external one. The
-worker's actual usage is reported every 60 frames by `SoftRas_WorkerStackFree()`
-(`esp_raster.cpp:157-160`, printed at `esp_host.cpp:109`).
+target of a cache-disabled ISR in this design — gets the cheap external one.
+
+The worker's headroom is not assumed, it is reported: `SoftRas_WorkerStackFree()`
+(`esp_raster.cpp:157-160`) wraps `uxTaskGetStackHighWaterMark` and the profile line prints
+it every 60 frames (`esp_host.cpp:109`). The task is created with **6144 bytes** and the
+measured high-water figure is **4376 bytes still free**, i.e. about 1.7 KB in use — which
+is the basis for the comment's "under 2 KB", and leaves the rest as the interrupt margin
+the rule above demands.
 
 ### 2.6 What stays internal
 
@@ -624,7 +635,7 @@ sTransDone = xSemaphoreCreateCounting(2, 2);
 ```
 
 The producer takes a permit *before* writing (`xSemaphoreTake` at
-`display_esplcd.c:289`), the completion ISR gives one back
+`display_esplcd.c:303`, and at `206` on the unscaled path), the completion ISR gives one back
 (`onTransDone`, `display_esplcd.c:43-49`). Two permits means one buffer can be filled
 while the other is on the wire, and the loop can never race ahead. `displayWaitFlush`
 drains both permits and returns them, which is exactly "no transfer in flight".
@@ -642,60 +653,81 @@ OpenLara, where internal SRAM was less contested): 20 KB of DMA buffers instead 
 60 KB, at a cost of roughly 0.4 ms per frame in extra transaction overhead
 (`display_esplcd.c:27-32`).
 
-### 3.3 555 → 565, and the MADCTL question
+### 3.3 555 → 565, and the MADCTL trap
 
 PSX VRAM is BGR555: bit 15 is the semi-transparency flag, bits 14–10 blue, 9–5 green,
-4–0 red. The rasterizer writes exactly that (`PsyX_SoftRas.cpp:189`,
-`(r | (g << 5) | (b << 10))`). The panel wants 16 bits per pixel with six of them for
-green. The conversion is four ALU ops:
+4–0 red — **red in the low bits**. The rasterizer writes exactly that
+(`PsyX_SoftRas.cpp:189`, `(r | (g << 5) | (b << 10))`). The panel wants RGB565: red in
+the **high** bits, with six bits for green. So the conversion has to move red *and* widen
+green. It is one shared helper:
 
 ```c
-// display_esplcd.c:296-299
-uint16_t c = s[sx >> 16];
-uint16_t g5 = (c >> 5) & 0x1F;
-uint16_t v = (uint16_t)((c & 0x1F) | (((g5 << 1) | (g5 >> 4)) << 5) | (((c >> 10) & 0x1F) << 11));
-d[x] = (uint16_t)((v >> 8) | (v << 8));
+// display_esplcd.c:187-195
+static inline uint16_t psx555toPanel(uint16_t c)
+{
+    const uint16_t r5 = c & 0x1F;
+    const uint16_t g5 = (c >> 5) & 0x1F;
+    const uint16_t b5 = (c >> 10) & 0x1F;
+    // green widens 5 -> 6 by replicating its top bit
+    const uint16_t v = (uint16_t)((r5 << 11) | (((g5 << 1) | (g5 >> 4)) << 5) | b5);
+    return (uint16_t)((v >> 8) | (v << 8));     // the panel wants MSB first
+}
 ```
 
 Green is widened by *replication* — `(g5 << 1) | (g5 >> 4)` copies the top bit into
 the new low bit, so 0x1F maps to 0x3F rather than 0x3E and full-scale stays full
 scale. The final byte swap compensates for little-endian memory versus MSB-first SPI;
-the panel receives `v` exactly as written.
+the panel receives `v` exactly as written. Both 555 paths call it: `displayFlush555` at
+`display_esplcd.c:211`, `displayFlush555Scaled` at `display_esplcd.c:310`.
 
-Note what is **not** done: red stays in the low five bits and blue in the high five.
-The word handed to the panel is BGR565, not RGB565. The intent, stated in
-`display.h:27-29` and in the original commit message, is that the ST7789's MADCTL BGR
-bit performs the red/blue swap in hardware, for free, so the CPU never touches it.
-
-**This is worth flagging honestly, because the configuration as committed does not
-enable that bit.** `board_pins.h:25` declares:
+**It did not always do the red/blue move, and that was a real, shipped, visible bug.**
+The earlier version left red in the low five bits and blue in the high five — the word
+handed to the panel was BGR565, not RGB565 — on the stated grounds that the ST7789's
+MADCTL colour-order bit would perform the swap in hardware, for free, so the CPU need
+never touch it. That premise is false on this board. `board_pins.h:25` declares:
 
 ```c
 #define LCD_RGB_ORDER    LCD_RGB_ELEMENT_ORDER_RGB
 ```
 
-and ESP-IDF's ST7789 driver maps that to `madctl_val = 0`, i.e. `LCD_CMD_BGR_BIT`
-(`1 << 3`) clear — RGB order
-(`components/esp_lcd/src/esp_lcd_panel_st7789.c:84-90`). Worse, the *other*
-conversion path in the same file disagrees with this one: the 8bpp palette expander
-inherited from the OpenLara port emits red in the **high** bits,
+and ESP-IDF's ST7789 driver maps that value to `madctl_val = 0`, leaving
+`LCD_CMD_BGR_BIT` (`1 << 3`) clear — RGB order, swapping nothing
+(`components/esp_lcd/src/esp_lcd_panel_st7789.c:84-90`). So the board really was
+displaying the entire game with red and blue exchanged: an orange sky over blue asphalt.
+
+Two things about how that survived are worth recording.
+
+**It was invisible to the debug pipeline.** The serial screen dumps (§4.5) read `vram[]`
+directly and reconstruct the image on the host; they never pass through this function. So
+every debug image ever captured looked correct while the panel did not. A dump taken
+upstream of the last transform cannot validate the last transform.
+
+**The tree contained its own counter-example.** The other conversion in the same file —
+the 8bpp palette expander inherited from the OpenLara port on this same board, with this
+same `board_pins.h` — has always put red in the high bits:
 
 ```c
-// display_esplcd.c:134
+// display_esplcd.c:137
 uint16_t rgb565 = (r << 11) | (g << 6) | b;   // 5-6-5, G gets the extra bit
 ```
 
-from an identically-laid-out BGR555 source, and that port runs on the same board with
-the same `board_pins.h`. Both cannot be right for one MADCTL setting. Either the 555
-path shows red and blue swapped on the panel, or the palette path does. It has not
-been checked against the physical panel with a reference image, and the serial screen
-dump (§4.5) reconstructs colour from VRAM rather than from what the panel received,
-so it cannot detect the difference.
+from a source laid out identically to PSX VRAM. Two conversions of one format for one
+panel under one MADCTL setting cannot both be right, and OpenLara demonstrably renders
+correct colour here. That is what settled the question, and it is what the review that
+found the defect actually did: no camera, no reference image, just noticing that the file
+disagreed with itself.
 
-The fix is one token in either place. It is also worth noting that the trick no longer
-buys anything measurable: the present runs on core 1 and is transfer-bound (15.4 ms of
-DMA against ~3 ms of conversion for a whole frame), so two extra shifts per pixel
-would disappear into the DMA wait. This is on the list.
+The comment block at `display_esplcd.c:175-186` now records the whole story next to the
+code. The cost of doing the swap in software is nil: the present runs on core 1 and is
+transfer-bound (15.4 ms of DMA against ~3 ms of conversion for a whole frame), so the two
+conversion costs no more instructions than the broken one did, and in any case
+disappears into the DMA wait. The "free" MADCTL trick was buying
+nothing even in the world where it worked.
+
+*Residual, and purely cosmetic:* the declaration comment in `display.h:27-29` and the
+present-path comment at `esp_platform.cpp:44-45` still describe the old intent ("the R/B
+swap is handled by the ST7789 MADCTL BGR bit"). The code they sit above is correct; the
+prose is stale and should be brought in line the next time either file is touched.
 
 ### 3.4 Runtime rescale: one panel, two video modes
 
@@ -708,7 +740,7 @@ The fix is a 16.16 nearest-neighbour walk that maps whatever the display environ
 asks for onto the fixed panel:
 
 ```c
-// display_esplcd.c:275-302
+// display_esplcd.c:289-316
 void displayFlush555Scaled(const uint16_t* src, int stride, int sw, int sh)
 {
     // 16.16 nearest-neighbour steps, so any PSX video mode fills the panel.
@@ -716,10 +748,10 @@ void displayFlush555Scaled(const uint16_t* src, int stride, int sw, int sh)
     const uint32_t yStep = ((uint32_t)sh << 16) / DISPLAY_HEIGHT;
     ...
         const uint16_t* s = src + (((uint32_t)(y + l) * yStep) >> 16) * stride;
+        uint16_t* d = dst + l * DISPLAY_WIDTH;
         uint32_t sx = 0;
         for (int x = 0; x < DISPLAY_WIDTH; x++, sx += xStep) {
-            uint16_t c = s[sx >> 16];
-            ...
+            d[x] = psx555toPanel(s[sx >> 16]);
         }
 }
 ```
@@ -754,7 +786,7 @@ whole cost from the frame's critical path.
 The worker is a notification-driven task pinned to core 1:
 
 ```c
-// display_esplcd.c:228-252
+// display_esplcd.c:242-251
 static void presentTask(void* arg)
 {
     for (;;) {
@@ -767,11 +799,11 @@ static void presentTask(void* arg)
 ```
 
 `displayPresentAsync` takes `sPresentIdle` *before* publishing the job
-(`display_esplcd.c:267-272`), so at most one flush is ever in flight and the caller
-blocks only if the previous frame's transfer has not finished — which, at 16.8 fps
-against a 15.4 ms transfer, it always has. If the worker failed to start, the function
-falls back to an inline flush (`display_esplcd.c:263-266`), so the feature is
-strictly additive.
+(`display_esplcd.c:275-287`; the take is at line 281), so at most one flush is ever in
+flight and the caller blocks only if the previous frame's transfer has not finished —
+which, at 16.8 fps against a 15.4 ms transfer, it always has. If the worker failed to
+start, the function falls back to an inline flush (`display_esplcd.c:277-280`), so the
+feature is strictly additive.
 
 **Why it is safe.** The source buffer is still being transmitted while the game draws
 the next frame. That is only acceptable if the next frame goes somewhere else — i.e.
@@ -779,7 +811,7 @@ if the PSX is double buffering. Rather than assume it, the port detects it from 
 data:
 
 ```c
-// esp_platform.cpp:136-144
+// esp_platform.cpp:139-152
 // Detect that from the display origin alternating between frames: in game
 // it toggles 0 / 256 every frame, while the 640x512 frontend keeps both
 // buffers at the same place and must therefore flush inline.
@@ -807,7 +839,7 @@ covered by a loading screen. Making it exact would mean tracking both `DISPENV`s
 rather than the last origin.
 
 The measured outcome, from the 60-frame profile line printed in
-`PsyX_EndScene` (`esp_host.cpp:96-108`):
+`PsyX_EndScene` (`esp_host.cpp:94-111`):
 
 | Stage | Cost at 16.8 fps |
 |---|---:|
@@ -874,7 +906,7 @@ detectable from the warning line.
 The masks are defined once, in the order of the 16-bit word the game assembles:
 
 ```c
-// esp_platform.cpp:172-187
+// esp_platform.cpp:171-187
 // PSX pad bits, active low, in the word the game builds as
 // (padRaw->buttons[0] << 8) | padRaw->buttons[1]  (see MapPad in pad.c).
 // buttons[0] carries d-pad/start/select, buttons[1] the face and shoulder keys.
@@ -917,7 +949,7 @@ PadInitDirect((unsigned char*)padbuffer[0], (unsigned char*)padbuffer[1]);
 and then reads those buffers directly every frame, decoding them in `MapPad`:
 
 ```c
-// pad.c:167-181
+// pad.c:164-179 (condensed)
 if (pData->id >> 4 == 4)      Pads[pad].type = 2;
 else if (pData->id >> 4 == 7) Pads[pad].type = 4;
 else { Pads[pad].type = 1; return; }
@@ -949,7 +981,7 @@ void PsyX_UpdateInput(void)
 }
 ```
 
-`0x41` is not arbitrary: `pad.c:432` accepts only ids 65 (`0x41`) or 115, and
+`0x41` is not arbitrary: `pad.c:436` accepts only ids 65 (`0x41`) or 115, and
 `MapPad` derives the controller type from `id >> 4`, so `0x41` means "digital pad, one
 halfword of data" and yields `type = 2`. The buffers themselves are captured in
 `PsyX_Pad_InitPad` (`esp_host.cpp:176-179`), which is PsyCross's hook for
@@ -975,7 +1007,7 @@ game to register an edge.
 the host likes:
 
 ```c
-// esp_platform.cpp:288-305
+// esp_platform.cpp:289-305
 // mid-way through a "=HHHH" packet: consume digits, never keys
 if (sHexCount >= 0) {
     const int v = hexVal(buf[i]);
@@ -1014,7 +1046,7 @@ drain; the receive buffer backed up until the host's `Write` blocked and timed o
 loop now drains to empty:
 
 ```c
-// esp_platform.cpp:281-285
+// esp_platform.cpp:280-285
 // Drain the whole receive buffer, not a fixed nibble of it: the host sends
 // a 5-byte pad packet 50 times a second, which outruns any per-frame cap
 // and eventually backs up until the host's write blocks.
@@ -1063,9 +1095,9 @@ reflashing (`esp_platform.cpp:306-314`, `dumpScreen` at `esp_platform.cpp:63-86`
 ```
 
 `0x410000 + 0xBF0000 = 0x1000000` — the data partition runs to the last byte of the
-16 MB flash. It has to: the demo image is 10.96 MB with sound. The 4 MB app partition
-is enormous by comparison (the firmware is 674 KB) but the alignment is convenient and
-there is nowhere else for the slack to go.
+16 MB flash. It has to: the demo image is 10.95 MB with sound. The 4 MB app partition
+is enormous by comparison (the firmware image is 674,208 bytes) but the alignment is
+convenient and there is nowhere else for the slack to go.
 
 The subtype `0x40` is a private value; `esp_fs_mount` looks the partition up by that
 subtype *and* the name `gamedata` (`esp_fs.c:222-223`).
@@ -1109,7 +1141,7 @@ and sits there instead of boot-looping.
 
 | Item | Status |
 |---|---|
-| Red/blue channel order (§3.3) | The 555 present path and the 8bpp palette path in `display_esplcd.c` disagree, and `board_pins.h` declares RGB element order, which clears the MADCTL BGR bit the 555 path's comment relies on. Needs a check against the physical panel; the fix is one token. |
+| Red/blue channel order (§3.3) | **Resolved.** The 555 path used to leave red in the low bits and rely on the MADCTL BGR bit, which `board_pins.h:25` (`LCD_RGB_ELEMENT_ORDER_RGB`) leaves clear — so the board really did show red and blue exchanged. Both 555 flush paths now go through `psx555toPanel` (`display_esplcd.c:187-195`), which moves red to bits 11-15, matching the 8bpp palette path. Remaining: the stale comments in `display.h:27-29` and `esp_platform.cpp:44-45`. |
 | Config / progress persistence (§1.7) | `getenv("HOME")` is `NULL`, so the profile path becomes absolute `/config.dat` and misses the `/d` mount entirely. Saves are silent no-ops. |
 | RAM files are session-only | No NVS write-back yet. |
 | Frontend rescale is point-sampled | 640×512 → 320×240 nearest neighbour. Harsh on hi-res 2D, but the present is already the frame's longest transfer. |

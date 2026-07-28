@@ -176,7 +176,7 @@ Two repositories, both on branch `esp32s3`: `SoftwareEscarlata/REDRIVER2`, with
 | `partitions.csv` | 4 MB app (the firmware is 674 KB), 11.94 MB `gamedata` to the end of flash. |
 | `build.ps1` | cmake+ninja directly against ESP-IDF v5.5.4 at `C:/Espressif5.5`; no `idf.py`. (Its header comment and its closing "flash.ps1" hint are copy-paste leftovers from the sibling Descent port — flashing is done with `esptool` by hand.) |
 | `get_demo_data.py` | Fetches the free DRIVER2DEMO set from the OpenDriver2 project's own browser-demo package. |
-| `make_data.py` | Packs that set into the `OLVL` flash container: magic, count, 40-byte entries, then 4-byte-aligned blobs so mmapped pointers are usable in place. The image is 11,487,176 bytes — 10.95 MB — with sound banks, 7.40 MB without. |
+| `make_data.py` | Packs that set into the `OLVL` flash container: magic, count, 40-byte entries, then 4-byte-aligned blobs so mmapped pointers are usable in place. The image is 11,487,176 bytes — 10.95 MB — with sound banks, 7.71 MB without. |
 | `drive.ps1` | Host-side keyboard driver. Reads real key up/down through `GetAsyncKeyState` and streams the complete pad word as `=HHHH` at 50 Hz. |
 
 ### `esp32_port/main/` — the platform layer

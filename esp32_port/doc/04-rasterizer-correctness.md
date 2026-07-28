@@ -6,11 +6,11 @@ rasterizer on an ESP32-S3. It is not a tour of the rasterizer's design; it is a 
 what went wrong, what it looked like on a 320x240 panel, how each one was cornered without
 a debugger, and what the actual repair was.
 
-Eight of the nine were found by looking at the panel or at an offline replica of the
-arithmetic. The ninth — the last one below — was found by *reading* the code during a
-review, after months of running, because every diagnostic instrument in this document
-was structurally blind to it. That is the most uncomfortable lesson here and it gets its
-own section.
+Eight of the nine were found from something the device did — a wrong image, a panic, a
+length-check message — or from an offline replica of the arithmetic. The ninth, the last
+one below, was found by *reading* the code during a review, months after it started
+shipping, because every diagnostic instrument in this document is structurally blind to
+it. That is the most uncomfortable lesson here and it gets its own section.
 
 All of the code discussed lives in these places:
 
@@ -657,7 +657,7 @@ static inline int edgeFn(const SRVert& a, const SRVert& b, int px, int py)
 
 That claim is checkable. Driver 2 obtains its screen coordinates from `gte_stsxy`, and the
 GTE saturates SX2/SY2 to 11 bits signed — `Lm_G1` / `Lm_G2` in
-`PsyCross/src/gte/PsyX_GTE.cpp:216-241` clamp to `[-0x400, 0x3ff]` and raise the overflow
+`PsyCross/src/gte/PsyX_GTE.cpp:217-242` clamp to `[-0x400, 0x3ff]` and raise the overflow
 flag. With the draw offset (`ofs`, `short`) adding at most 2047, each difference is bounded
 by ~4094, each product by ~1.7e7 < 2^25, and the difference of two such terms stays
 comfortably inside `int`. So `area` can never legitimately exceed ~3.3e7, and 6.7e7 is a
@@ -968,7 +968,7 @@ int MoveImage(RECT16* rect, int x, int y)
 
 A NULL `src` means *VRAM to VRAM*, and the source rectangle is carried in the `x`/`y`
 arguments that the port had explicitly discarded. The reference implementation in
-`PsyCross/src/render/PsyX_render.cpp:1652-1665` documents the convention only by doing it:
+`PsyCross/src/render/PsyX_render.cpp:1650-1673` documents the convention only by doing it:
 
 ```c
 	if (!src)
@@ -980,7 +980,7 @@ arguments that the port had explicitly discarded. The reference implementation i
 	src += x + y * stride;
 ```
 
-Driver 2 reaches this through a `DR_MOVE` packet. `SetDrawMove` (`LIBGPU.C:373-385`)
+Driver 2 reaches this through a `DR_MOVE` packet. `SetDrawMove` (`LIBGPU.C:373-389`)
 stamps the tag with code byte `0x01` and puts the GPU's `0x80` "copy rectangle,
 VRAM to VRAM" command in the next word, so `ParsePrimitive` dispatches it in the
 `primType == 0x00` arm, sub-type `0x1` (`PsyX_GPU.cpp:1610-1640`). In gameplay the caller
@@ -1277,7 +1277,9 @@ now exactly one implementation of the conversion instead of two disagreeing ones
 comment block at `display_esplcd.c:175-186` records what the old version did and why it
 was wrong.
 
-The cost is two extra shifts per pixel, which is unmeasurable: the present runs on core 1
+The shift count is in fact unchanged — moving red from bit 0 to bit 11 and blue the
+other way alters which operand is shifted, not how many shifts run — and it would be
+unmeasurable either way: the present runs on core 1
 and is transfer-bound — 15.4 ms of DMA against roughly 3 ms of conversion for a whole
 frame — so the "free" MADCTL trick was buying nothing even if it had worked.
 
@@ -1358,11 +1360,11 @@ take the integer one.
 | Reference TILE/SPRT decode (`& 0xFD`) | `PsyX_GPU.cpp:1328-1341` |
 | DR_TWIN raw-field parse | `PsyX_GPU.cpp:1505-1513` |
 | `DR_MOVE` / `MoveImage` rendezvous | `PsyX_GPU.cpp:1610-1640` |
-| `SetDrawMove` packet build | `PsyCross/src/psx/LIBGPU.C:373-385` |
+| `SetDrawMove` packet build | `PsyCross/src/psx/LIBGPU.C:373-389` |
 | `SetDrawEnv` texture-window encode | `PsyCross/src/psx/LIBGPU.C:352` |
 | `MoveImage` NULL convention | `PsyCross/src/psx/LIBGPU.C:131` |
-| GTE 11-bit screen saturation | `PsyCross/src/gte/PsyX_GTE.cpp:216-241` |
-| Reference `GR_CopyVRAM` | `PsyCross/src/render/PsyX_render.cpp:1652-1665` |
+| GTE 11-bit screen saturation | `PsyCross/src/gte/PsyX_GTE.cpp:217-242` |
+| Reference `GR_CopyVRAM` | `PsyCross/src/render/PsyX_render.cpp:1650-1673` |
 | ESP32 `GR_CopyVRAM` | `esp32_port/main/esp_stubs.cpp:83-113` |
 | Serial VRAM / tpage dumps | `esp32_port/main/esp_platform.cpp:88-132` |
 | PSX 555 → panel conversion | `esp32_port/main/display_esplcd.c:175-195`, used at `211`, `310` |

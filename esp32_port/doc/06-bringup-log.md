@@ -124,7 +124,7 @@ Four dumps are wired to single keystrokes on the console
 
 | key | what it dumps |
 |---|---|
-| `p` | the display area exactly as the panel sees it, 160x120 |
+| `p` | the display rect the present will read, 160x120 (VRAM, *not* the bytes the panel receives — see §2) |
 | `v` | all 1024x512 of VRAM at half scale — texture pages, CLUTs, both framebuffers |
 | `t` | one texture page *decoded the way the rasteriser samples it* (4bpp indices through the CLUT) |
 | `r` | raw 16-bit VRAM words of one page, as hex, for byte-level comparison against the source file |
@@ -134,6 +134,11 @@ slow and ugly and it answered questions nothing else could — `v` in particular
 tells you instantly whether a texture is missing (VRAM is empty), wrongly uploaded
 (garbage in the page), or correctly uploaded but wrongly *sampled* (page looks
 right, geometry looks wrong).
+
+One limit, stated here because it later mattered: all four of these read the `vram[]`
+array and rebuild colour on the host. None of them observes the bytes the panel is sent.
+Anything wrong in the 555→565 conversion downstream is invisible to all of them, which is
+exactly what happened (§2).
 
 The `vTaskDelay(1)` per line matters: the USB-JTAG console is installed with a
 1 KB TX buffer (`esp_platform.cpp:247-251`) and drops rather than blocks when it
@@ -339,7 +344,7 @@ The original present had been written for the second case and simply clamped:
 Clamping a 640x512 request to 320x240 does not scale it. It crops it.
 
 **Fix.** Clamp only against VRAM's real bounds, and let the flush resample
-(`esp_platform.cpp:88-101`):
+(`esp_platform.cpp:94-100`, inside `SoftRas_PresentESP` at `88`):
 
 ```c
     const int dx = activeDispEnv.disp.x & (VRAM_WIDTH - 1);
@@ -351,7 +356,7 @@ Clamping a 640x512 request to 320x240 does not scale it. It crops it.
     if (dh > VRAM_HEIGHT - dy) dh = VRAM_HEIGHT - dy;
 ```
 
-`displayFlush555Scaled` (`display_esplcd.c:275-305`) does 16.16 nearest-neighbour
+`displayFlush555Scaled` (`display_esplcd.c:289-316`) does 16.16 nearest-neighbour
 stepping into the same 16-line DMA chunks as before:
 
 ```c
@@ -365,10 +370,28 @@ index that happens to increment by one.
 
 Two details worth noting. The `& (VRAM_WIDTH - 1)` / `& (VRAM_HEIGHT - 1)` on the
 origin is not paranoia — the game's two buffers legitimately sit at y=0 and y=256
-and the PSX wraps VRAM addressing. And the R/B channel swap between the PSX's
-BGR555 and the panel's RGB565 is *not* done in this loop: it is handled by the
-ST7789's MADCTL colour-order bit, so per pixel only green has to widen from 5 to 6
-bits (`display_esplcd.c:193-196`).
+and the PSX wraps VRAM addressing.
+
+The second detail is a mistake, and it is left here rather than quietly rewritten
+because of *how* it was eventually found. At this point in the bring-up, the R/B channel
+swap between the PSX's BGR555 (red in the low bits) and the panel's RGB565 (red in the
+high bits) was **not** done in this loop. The reasoning written down at the time was that
+the ST7789's MADCTL colour-order bit would do it in hardware, so per pixel only green had
+to widen from 5 to 6 bits. That was wrong: `board_pins.h:25` declares
+`LCD_RGB_ELEMENT_ORDER_RGB`, which ESP-IDF's ST7789 driver maps to `madctl_val = 0` —
+`LCD_CMD_BGR_BIT` clear, nothing swapped
+(`components/esp_lcd/src/esp_lcd_panel_st7789.c:84-90`). The board was therefore
+displaying the whole game with red and blue exchanged: an orange sky over blue asphalt.
+
+Nothing in this log caught it, and nothing in this log *could* have. Every instrument in
+the section above reads `vram[]` and rebuilds the image on the host, upstream of this
+conversion, so every `#DUMP` in this entire bring-up was correct about a frame the panel
+was never shown. It was found much later, by review, from the observation that the same
+file converts the same source format twice and disagrees with itself: the 8bpp palette
+path (`display_esplcd.c:137`) has always put red in the high bits, and it drives this
+same panel in the OpenLara port on this same board. Both 555 paths now go through
+`psx555toPanel` (`display_esplcd.c:187-195`), which moves red up itself; the comment above
+it records the defect. See 04-rasterizer-correctness.md, defect 9.
 
 ---
 
@@ -429,7 +452,7 @@ no failure branch:
 Now look at how states are dispatched:
 
 ```c
-// src_rebuild/Game/C/state.c:39-61
+// src_rebuild/Game/C/state.c:44-54 (the non-Emscripten arm of DoStateLoop, 40-55)
 void DoStateLoop()
 {
 	do
@@ -538,7 +561,7 @@ void ReadControllers(void)
 ```
 
 `PadGetState` is called too — but only later in the same function, from
-`HandleDualShock` (`pad.c:452` → `pad.c:265`), and only to drive the
+`HandleDualShock` (`pad.c:455` → `pad.c:265`), and only to drive the
 DualShock/vibration state machine. It runs *after* `MapPad` has already consumed
 the buffer. So publishing the report from `PsyX_Pad_GetStatus` meant the game read
 a report that was one frame stale, and on the very first frame read an all-zero
@@ -717,10 +740,14 @@ The backtrace is a list of `PC:SP` pairs. Turning the PCs into source lines need
 the exact ELF that produced the running binary:
 
 ```bash
-C:/Espressif5.5/tools/xtensa-esp-elf/esp-14.2.0_20260121/xtensa-esp-elf/bin/xtensa-esp-elf-addr2line.exe \
+C:/Espressif5.5/tools/xtensa-esp-elf/esp-14.2.0_20260121/xtensa-esp-elf/bin/xtensa-esp32s3-elf-addr2line.exe \
     -pfiaC -e E:/Hardware/Driver2/REDRIVER2/esp32_port/build/driver2_esp32s3.elf \
     0x4038a6ae 0x4200f3bf 0x42011c4d
 ```
+
+(The toolchain ships several `*-addr2line.exe` front ends in that one `bin` directory —
+`xtensa-esp-elf-`, `xtensa-esp32-elf-`, `xtensa-esp32s2-elf-`, `xtensa-esp32s3-elf-`.
+Use the `xtensa-esp32s3-elf-` one for this target.)
 
 The flags are not decoration on this project:
 
@@ -792,8 +819,8 @@ level loads most of it is already committed:
 
 | block | size | where |
 |---|---|---|
-| PSX RAM arena | 2 MB | `system.c:120-122` (`g_allocatedMem`, `EXT_RAM_BSS_ATTR`) |
-| emulated PSX VRAM | 1 MB | `esp_host.cpp:253-254` |
+| PSX RAM arena | 2 MB | `system.c:122` (`g_allocatedMem`, `EXT_RAM_BSS_ATTR`) |
+| emulated PSX VRAM | 1 MB | `esp_host.cpp:254` (1024 × 512 × 16 bits = 1,048,576 B) |
 | two primitive tables | 640 KB | `PRIMTAB_SIZE` = `0x50000` with `USE_EXTENDED_PRIM_POINTERS=1` (`system.h:143`) |
 | sound bank buffer | 512 KB | `esp_main.cpp:54` |
 | frontend buffer | 384 KB | `esp_main.cpp:47` |
@@ -893,7 +920,7 @@ handled only the first case and read `src[yy * w + xx]` unconditionally.
 
 Why it only showed up in game: the only `DR_MOVE` primitive this build emits comes
 from the sky renderer sampling the sun out of the framebuffer
-(`src_rebuild/Game/C/sky.c:667-672`):
+(`src_rebuild/Game/C/sky.c:668-672`):
 
 ```c
 			sample_sun = (DR_MOVE*)current->primptr;
@@ -1015,8 +1042,9 @@ immediately broke the receive path:
 ```
 
 The old code read a fixed 16 bytes per frame. At 5 bytes × 50 Hz = 250 B/s inbound
-against 16 B/frame at ~14 fps = 224 B/s consumed, the 256-byte RX buffer fills in
-about twenty seconds and the host's `SerialPort.Write` starts timing out. The
+against 16 B/frame at the 13.5 fps of the day = 216 B/s consumed, the 256-byte RX buffer
+(`esp_platform.cpp:247-251`) fills in about twenty seconds and the host's
+`SerialPort.Write` starts timing out. The
 symptom — input works, then gradually stops — looked nothing like a buffer
 problem, which is why it is worth recording: **a per-frame input cap is a bug
 whenever the input rate is not bounded by the frame rate.**
@@ -1057,6 +1085,16 @@ The diagnostic tools are all still in the tree and all still compiled in — the
 dump keys, the heartbeat, the profile line. They cost a few hundred bytes and one
 branch per frame, and they are the reason the next failure takes minutes instead
 of an evening.
+
+**And one thing they are not.** All four instruments tap `vram[]` and reconstruct the
+image on the host. Everything downstream of that array — in practice, the one function
+that converts PSX BGR555 into what the ST7789 is actually sent — is outside their reach
+by construction. That is where a ninth defect sat through this entire log: red and blue
+exchanged in every frame (§2), invisible in every dump, found months later by reading the
+file and noticing it disagreed with itself. The lesson is not "add another dump"; it is
+that an instrument which taps upstream of the last transform can never tell you the last
+transform is right, and it is worth knowing which of your instruments are in that
+position *before* you trust one to clear a suspect.
 
 **Still open at the end of this log:** no audio (SPU → I2S), only the demo Havana
 level (retail cities would come from microSD), and game logic plus the software

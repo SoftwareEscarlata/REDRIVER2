@@ -453,7 +453,7 @@ The `gpio17` warning is expected on this board and is not a fault — see §7.
 Then, once per 60 frames, from `PsyX_EndScene` (`esp_host.cpp:82-118`):
 
 ```
-I (xxx) psx_host: 16.8 fps  320x240  1200 prims/frame
+I (xxx) psx_host: 16.8 fps  320x240  2400 prims/frame
 I (xxx) psx_host:   raster c0 29 + c1 32 ms/f  present 0  other 27 | ... tris/f  ... kpx/f  68 cyc/px  diverge 0
 I (xxx) psx_host:   worker stack free 4376 B
 ```

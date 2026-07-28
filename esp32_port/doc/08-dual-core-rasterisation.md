@@ -334,7 +334,7 @@ Because the game task is pinned to core 0 and the worker to core 1, the core id
 *is* the slot — no thread-local storage, no index to pass down, and every existing
 `activeDrawEnv` reference in PsyCross keeps working unmodified, including on PC
 where the macro degenerates to `g_drawEnv[0]`. Counted over the PsyCross tree,
-that is 81 use sites — 39 lines in `PsyX_GPU.cpp`, 14 in `PsyX_SoftRas.cpp`, 6 in
+that is 81 occurrences across 64 lines — 45 in `PsyX_GPU.cpp`, 19 in `PsyX_SoftRas.cpp`, 12 in
 `LIBGPU.C`, 5 in `PsyX_main.cpp` — plus the two macro definitions in
 `PsyX_GPU.h`. None of them changed.
 

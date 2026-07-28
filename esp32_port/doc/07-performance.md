@@ -713,7 +713,8 @@ moving where it happens, not what it does.
 when a review found that the port had been leaving red in the low bits and
 relying on a MADCTL colour-order bit that is clear on this board — see
 `04-rasterizer-correctness.md` and `05-the-esp32-platform-layer.md`. It costs one
-extra shift per pixel and, per the paragraph above, that is not measurable
+no extra instructions — it changes which operand is shifted, not how many shifts
+run — and, per the paragraph above, the whole conversion is not measurable
 against 15.4 ms of SPI.)
 
 The corollary is worth stating for anyone continuing this work: **the present is

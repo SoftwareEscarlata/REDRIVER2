@@ -588,7 +588,9 @@ you want to judge by eye. For those, there is a runtime toggle
 ```
 
 `g_srFilter` gates the minification filter (`PsyX_SoftRas.cpp:459`). Flipping it
-mid-drive shows both the visual difference and, 60 frames later, the cost:
+with the car stationary shows both the visual difference and, 60 frames later,
+the cost. Stand still for the comparison: the frame load swings by a factor of two
+between standing and driving, so a toggle taken mid-drive measures two things at once:
 **14.5 -> 10.0 fps**.
 
 Read that pair carefully, because it is easy to misquote. **14.5 fps is the

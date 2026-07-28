@@ -521,7 +521,9 @@ Measured on the board, in game, stationary, by toggling the filter live with the
 
 > **Read the 14.5 correctly.** It is the baseline *of this particular A/B scene*,
 > not the port's headline unfiltered frame rate, which is **16.8 fps**. The two
-> were measured in different parts of the level: this A/B ran in a heavier one.
+> were measured at different points in the level, and on different builds - the 16.8
+> figure predates the filter code existing at all. Only the 14.5 -> 10.0 comparison,
+> taken seconds apart in one scene, is meaningful; neither absolute number transfers.
 > Frame load varies a lot — roughly 1200 primitives standing still against
 > 2300-3100 while driving — so an absolute fps figure only means anything next to
 > the scene it came from. What the pair above is good for is the *ratio*, which is
